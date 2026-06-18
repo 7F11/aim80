@@ -1,0 +1,14 @@
+*.o
+aim80
+
+*.mac
+*.asm
+*.inc
+*.rel
+*.rex
+*.lst
+*.prn
+
+!README.md
+!rex-format.md
+*.md
