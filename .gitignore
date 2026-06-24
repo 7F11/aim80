@@ -9,6 +9,7 @@ aim80
 *.lst
 *.prn
 
-!README.md
-!rex-format.md
 *.md
+!README.md
+!aim80.md
+!rex-format.md
