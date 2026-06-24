@@ -80,7 +80,7 @@ static void inst3(Instruction *inst, int b, Value *v) {
 #define EMIT3(b1, v)  do { inst3(inst, b1, v);  return 0; } while(0)
 #define OP(name) (strcasecmp(opcode, name) == 0)
 
-int encode_8080(const char *opcode, const char *op1, const char *op2,
+int encode_8080(int cpu_mode, const char *opcode, const char *op1, const char *op2,
                 Value *val1, Value *val2, Instruction *inst) {
     memset(inst, 0, sizeof(*inst));
     inst->reloc_pos = -1;
@@ -102,6 +102,11 @@ int encode_8080(const char *opcode, const char *op1, const char *op2,
     if (OP("SPHL")) EMIT1(0xF9);
     if (OP("PCHL")) EMIT1(0xE9);
     if (OP("EI"))   EMIT1(0xFB);
+    /* 8085 extensions */
+    if (cpu_mode & INST_SET_8085) {
+        if (OP("RIM"))  EMIT1(0x20);
+        if (OP("SIM"))  EMIT1(0x30);
+    }
     if (OP("DI"))   EMIT1(0xF3);
     /* conditional returns: RC RNC RZ RNZ RP RM RPE RPO */
     if (OP("RNZ"))  EMIT1(0xC0);

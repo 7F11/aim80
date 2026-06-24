@@ -24,7 +24,7 @@ typedef struct {
     const char *infile;
     const char *outfile;
     int pass;
-    int z80_mode;
+    int cpu_mode;  /* INST_SET_* bitmask, see codegen.h */
     int errors;
     int warnings;
     int has_start;

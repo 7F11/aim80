@@ -2,6 +2,24 @@
 #define CODEGEN_H
 #include "symtab.h"
 
+/* Instruction set flags (OR-able) */
+#define INST_SET_8080  0x0001
+#define INST_SET_8085  0x0002
+#define INST_SET_Z80   0x0004
+#define INST_SET_Z80U  0x0008
+#define INST_SET_Z180  0x0010
+#define INST_SET_R800  0x0020
+#define INST_SET_ZXNEXT 0x0040
+
+/* CPU mode presets (combinations) */
+#define CPU_8080  (INST_SET_8080)
+#define CPU_8085  (INST_SET_8080 | INST_SET_8085)
+#define CPU_Z80   (INST_SET_Z80)
+#define CPU_Z80U  (INST_SET_Z80 | INST_SET_Z80U)
+#define CPU_Z180  (INST_SET_Z80 | INST_SET_Z180)
+#define CPU_R800  (INST_SET_Z80 | INST_SET_R800)
+#define CPU_ZXNEXT (INST_SET_Z80 | INST_SET_Z80U | INST_SET_ZXNEXT)
+
 /* encoded instruction — up to 4 bytes */
 typedef struct {
     unsigned char bytes[6];
@@ -17,7 +35,7 @@ int reg8080(const char *name);
 int regpair(const char *name);
 
 /* encode an 8080 instruction */
-int encode_8080(const char *opcode, const char *op1, const char *op2,
+int encode_8080(int cpu_mode, const char *opcode, const char *op1, const char *op2,
                 Value *val1, Value *val2, Instruction *inst);
 
 /* Z80 register encoding */
@@ -32,7 +50,7 @@ int z80_is_iy(const char *name);
    op1/op2 are operand strings (register names, "(HL)", "(IX+n)", etc.)
    val1/val2 are expression values for immediate/address operands
    ind1/ind2: 1 if operand is indirect (parenthesized) */
-int encode_z80(const char *opcode, const char *op1, const char *op2,
+int encode_z80(int cpu_mode, const char *opcode, const char *op1, const char *op2,
                Value *val1, Value *val2,
                int ind1, int ind2,
                Value *idx_off1, Value *idx_off2,

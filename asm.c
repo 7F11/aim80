@@ -205,9 +205,9 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
 
     if (!args || !*args) {
         Instruction inst;
-        int rc = ctx->z80_mode ?
-                 encode_z80(opcode, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, &inst) :
-                 encode_8080(opcode, NULL, NULL, NULL, NULL, &inst);
+        int rc = (ctx->cpu_mode & INST_SET_Z80) ?
+                 encode_z80(ctx->cpu_mode, opcode, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, &inst) :
+                 encode_8080(ctx->cpu_mode, opcode, NULL, NULL, NULL, NULL, &inst);
         if (rc == 0)
             emit_instr(ctx, &inst);
         else if (ctx->pass == 2) {
@@ -252,7 +252,7 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
         int _rlen=(int)(_e-_s); char _rb[16]=""; \
         if(_rlen>0&&_rlen<16){memcpy(_rb,_s,_rlen);_rb[_rlen]='\0';} \
         int _is_reg = 0; \
-        if (ctx->z80_mode) { \
+        if (ctx->cpu_mode & INST_SET_Z80) { \
             _is_reg = (z80_reg8(_rb)>=0||z80_reg16(_rb)>=0||z80_reg16af(_rb)>=0|| \
                        z80_cond(_rb)>=0||z80_is_ix(_rb)||z80_is_iy(_rb)|| \
                        strcasecmp(_rb,"I")==0||strcasecmp(_rb,"R")==0|| \
@@ -314,7 +314,7 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
         }
     }
     /* JR/DJNZ relative offset */
-    if (ctx->z80_mode && (!strcasecmp(opcode, "JR") || !strcasecmp(opcode, "DJNZ"))) {
+    if ((ctx->cpu_mode & INST_SET_Z80) && (!strcasecmp(opcode, "JR") || !strcasecmp(opcode, "DJNZ"))) {
         Value *tgt = has_val2 ? &val2 : (has_val1 ? &val1 : NULL);
         if (tgt) {
             int pc = segment_get_loc(&ctx->segment) + 2;
@@ -323,8 +323,8 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
     }
 
     Instruction inst;
-    int rc = ctx->z80_mode ?
-        encode_z80(opcode,
+    int rc = (ctx->cpu_mode & INST_SET_Z80) ?
+        encode_z80(ctx->cpu_mode, opcode,
                     op1[0]   ? op1   : NULL,
                     op2[0]   ? op2   : NULL,
                     has_val1 ? &val1 : NULL,
@@ -335,7 +335,7 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
                     has_idx2 ? &idx2 : NULL,
                     &inst
         )                  :
-        encode_8080(opcode,
+        encode_8080(ctx->cpu_mode, opcode,
                     op1[0]   ? op1   : NULL,
                     op2[0]   ? op2   : NULL,
                     has_val1 ? &val1 : NULL,
@@ -357,8 +357,7 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
 }
 
 /* check if op is a known opcode */
-static int is_opcode(const char *op, int z80) {
-    /* quick checks for common cases */
+static int is_opcode(const char *op, int mode) {
     static const char *ops8080[] = {
         "ACI", "ADC", "ADD", "ADI", "ANA", "ANI", "CALL", "CC", "CM", "CMA", "CMC",
         "CMP", "CNC", "CNZ", "CP", "CPE", "CPI", "CPO", "CZ", "DAA", "DAD", "DCR",
@@ -369,6 +368,7 @@ static int is_opcode(const char *op, int z80) {
         "RZ", "SBB", "SBI", "SHLD", "SPHL", "STA", "STAX", "STC", "SUB", "SUI",
         "XCHG", "XRA", "XRI", "XTHL", NULL
     };
+    static const char *ops8085[] = { "RIM", "SIM", NULL };
     static const char *opsz80[] = {
         "ADC", "ADD", "AND", "BIT", "CALL", "CCF", "CP", "CPD", "CPDR", "CPI",
         "CPIR", "CPL", "DAA", "DEC", "DI", "DJNZ", "EI", "EX", "EXX", "HALT",
@@ -378,9 +378,39 @@ static int is_opcode(const char *op, int z80) {
         "RLC", "RLCA", "RLD", "RR", "RRA", "RRC", "RRCA", "RRD", "RST", "SBC",
         "SCF", "SET", "SLA", "SRA", "SRL", "SUB", "XOR", NULL
     };
-    const char **list = z80 ? opsz80 : ops8080;
-    for (int i = 0; list[i]; i++)
-        if (strcasecmp(op, list[i]) == 0) return 1;
+    static const char *opsz180[] = {
+        "MLT", "TST", "TSTIO", "SLP", "IN0", "OUT0",
+        "OTIM", "OTDM", "OTIMR", "OTDMR", NULL
+    };
+    static const char *opsz80u[] = { "SLL", NULL };
+    static const char *opsr800[] = { "MULUB", "MULUW", NULL };
+    static const char *opsnext[] = {
+        "MUL", "SWAPNIB", "MIRROR", "TEST", "NEXTREG",
+        "PIXELDN", "PIXELAD", "SETAE", "OUTINB",
+        "LDIX", "LDIRX", "LDDX", "LDDRX", "LDPIRX", "LDIRSCALE",
+        "BSLA", "BSRA", "BSRL", "BSRF", "BRLC", NULL
+    };
+    if (mode & INST_SET_Z80)
+        for (int i = 0; opsz80[i]; i++)
+            if (strcasecmp(op, opsz80[i]) == 0) return 1;
+    if (mode & INST_SET_Z80U)
+        for (int i = 0; opsz80u[i]; i++)
+            if (strcasecmp(op, opsz80u[i]) == 0) return 1;
+    if (mode & INST_SET_Z180)
+        for (int i = 0; opsz180[i]; i++)
+            if (strcasecmp(op, opsz180[i]) == 0) return 1;
+    if (mode & INST_SET_R800)
+        for (int i = 0; opsr800[i]; i++)
+            if (strcasecmp(op, opsr800[i]) == 0) return 1;
+    if (mode & INST_SET_ZXNEXT)
+        for (int i = 0; opsnext[i]; i++)
+            if (strcasecmp(op, opsnext[i]) == 0) return 1;
+    if (mode & INST_SET_8080)
+        for (int i = 0; ops8080[i]; i++)
+            if (strcasecmp(op, ops8080[i]) == 0) return 1;
+    if (mode & INST_SET_8085)
+        for (int i = 0; ops8085[i]; i++)
+            if (strcasecmp(op, ops8085[i]) == 0) return 1;
     return 0;
 }
 
@@ -734,6 +764,11 @@ static int handle_symbol_dir(AsmCtx *ctx, SrcLine *sl) {
                     e->defined = 0;
                 }
                 if (e) e->is_public = 1;
+                if (ctx->outfmt == OUT_REL && strlen(nm) > 6 && ctx->pass == 2) {
+                    fprintf(stderr, "%s:%d: public symbol '%s' truncated to 6 chars in REL output\n",
+                            sl->file, sl->line, nm);
+                    ctx->warnings++;
+                }
             }
         }
     }
@@ -748,6 +783,10 @@ static int handle_symbol_dir(AsmCtx *ctx, SrcLine *sl) {
                 while (*p && *p != ',' && !isspace(*p) && ni < SYM_NAME_BUF - 1)
                     nm[ni++] = toupper((unsigned char)*p++);
                 nm[ni] = '\0';
+                if (ctx->outfmt == OUT_REL && ni > 6 && ctx->pass == 2) {
+                    fprintf(stderr, "%s:%d: external symbol '%s' truncated to 6 chars in REL output\n", sl->file, sl->line, nm);
+                    ctx->warnings++;
+                }
                 symtab_define(&ctx->symtab, nm, SYM_EXTERNAL, val_external(nm));
             }
         }
@@ -769,6 +808,10 @@ static int handle_symbol_dir(AsmCtx *ctx, SrcLine *sl) {
                 while (*a && *a != ',' && !isspace(*a) && ni < SYM_NAME_BUF - 1)
                     nm[ni++] = toupper((unsigned char)*a++);
                 nm[ni] = '\0';
+                if (ctx->outfmt == OUT_REL && ni > 6 && ctx->pass == 2) {
+                    fprintf(stderr, "%s:%d: external symbol '%s' truncated to 6 chars in REL output\n", sl->file, sl->line, nm);
+                    ctx->warnings++;
+                }
                 symtab_define(&ctx->symtab, nm, SYM_EXTERNAL, val_external(nm));
             }
         }
@@ -896,9 +939,19 @@ static int handle_listing_dir(AsmCtx *ctx, SrcLine *sl) {
 
 static int handle_misc_dir(AsmCtx *ctx, SrcLine *sl) {
     if (IS(".Z80"))
-        ctx->z80_mode = 1;
+        ctx->cpu_mode = CPU_Z80;
     else if (IS(".8080"))
-        ctx->z80_mode = 0;
+        ctx->cpu_mode = CPU_8080;
+    else if (IS(".8085"))
+        ctx->cpu_mode = CPU_8085;
+    else if (IS(".Z80UNDOC"))
+        ctx->cpu_mode = CPU_Z80U;
+    else if (IS(".Z180"))
+        ctx->cpu_mode = CPU_Z180;
+    else if (IS(".R800"))
+        ctx->cpu_mode = CPU_R800;
+    else if (IS(".ZXNEXT"))
+        ctx->cpu_mode = CPU_ZXNEXT;
     else if (IS(".REQUEST")) {
         if (ctx->pass == 2 && sl->args && ctx->outfmt == OUT_REL) {
             const char *p = sl->args;
@@ -1265,7 +1318,7 @@ int asm_pass(AsmCtx *ctx) {
                 continue;
             }
         }
-        if (!is_opcode(sl.op, ctx->z80_mode)) {
+        if (!is_opcode(sl.op, ctx->cpu_mode)) {
             SymEntry *e = symtab_lookup(&ctx->symtab, sl.op);
             /* if first hit isn't macro, check for macro in chain (separate namespace) */
             if (e && e->type != SYM_MACRO)
@@ -1327,7 +1380,7 @@ int asm_pass(AsmCtx *ctx) {
             }
         }
         /* Z80 SET opcode: in Z80 mode, SET without label is the bit-set opcode */
-        if (ctx->z80_mode && strcasecmp(sl.op, "SET") == 0 && !sl.label) {
+        if ((ctx->cpu_mode & INST_SET_Z80) && strcasecmp(sl.op, "SET") == 0 && !sl.label) {
             do_opcode(ctx, "SET", sl.args, &sl);
             if (ctx->pass == 2) lst_end_stmt(&ctx->listing);
             continue;
@@ -1342,7 +1395,7 @@ int asm_pass(AsmCtx *ctx) {
         if (rc == -1) break;    /* END directive */
         if (rc == 1)  continue;
 
-        if (is_opcode(sl.op, ctx->z80_mode))
+        if (is_opcode(sl.op, ctx->cpu_mode))
             do_opcode(ctx, sl.op, sl.args, &sl);
         else if (sl.op[0] == '"' || sl.op[0] == '\'') {
             /* implicit DB — line starts with quoted string */

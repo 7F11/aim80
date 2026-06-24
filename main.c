@@ -13,7 +13,6 @@ static void usage(const char *prog) {
             "  -f rel|rex    Output format (default: rel)\n"
             "  -l lstfile    Generate listing file\n"
             "  -x            Include cross-reference in listing\n"
-            "  -z            Start in Z80 mode (default: 8080)\n"
             , prog);
 }
 
@@ -51,12 +50,13 @@ int main(int argc, char **argv) {
     const char *infile = NULL;
     const char *outfile = NULL;
     const char *lstfile = NULL;
-    int initial_z80 = 0;
+    int initial_cpu = CPU_8080;
     int do_listing = 0, do_xref = 0;
     OutFormat outfmt = OUT_REL;
+    int fmt_explicit = 0;
     int c;
 
-    while ((c = getopt(argc, argv, "o:l:f:xz8h")) != -1)
+    while ((c = getopt(argc, argv, "o:l:f:p:xh")) != -1)
         switch (c) {
         case 'o': outfile = optarg;
         break;
@@ -64,6 +64,7 @@ int main(int argc, char **argv) {
         lstfile = optarg;
         break;
         case 'f':
+            fmt_explicit = 1;
             if (strcasecmp(optarg, "rex") == 0)
                 outfmt = OUT_REX;
             else if (strcasecmp(optarg, "rel") == 0)
@@ -73,11 +74,27 @@ int main(int argc, char **argv) {
                 return 1;
             }
             break;
+        case 'p':
+            if (strcasecmp(optarg, "8080") == 0)
+                initial_cpu = CPU_8080;
+            else if (strcasecmp(optarg, "8085") == 0)
+                initial_cpu = CPU_8085;
+            else if (strcasecmp(optarg, "Z80") == 0)
+                initial_cpu = CPU_Z80;
+            else if (strcasecmp(optarg, "Z80U") == 0 || strcasecmp(optarg, "Z80UNDOC") == 0)
+                initial_cpu = CPU_Z80U;
+            else if (strcasecmp(optarg, "Z180") == 0)
+                initial_cpu = CPU_Z180;
+            else if (strcasecmp(optarg, "R800") == 0)
+                initial_cpu = CPU_R800;
+            else if (strcasecmp(optarg, "ZXNEXT") == 0 || strcasecmp(optarg, "NEXT") == 0)
+                initial_cpu = CPU_ZXNEXT;
+            else {
+                fprintf(stderr, "Unknown CPU: %s\n", optarg);
+                return 1;
+            }
+            break;
         case 'x': do_xref = 1;
-        break;
-        case 'z': initial_z80 = 1;
-        break;
-        case '8': initial_z80 = 0;
         break;
         case 'h': usage(argv[0]);
         return 0;
@@ -98,6 +115,12 @@ int main(int argc, char **argv) {
         snprintf(infile_buf, sizeof(infile_buf), "%s.mac", infile);
         infile = infile_buf;
     }
+    /* guess format from output extension */
+    if (!fmt_explicit && outfile) {
+        const char *ext = strrchr(outfile, '.');
+        if (ext && strcasecmp(ext, ".rex") == 0)
+            outfmt = OUT_REX;
+    }
     /* default output name */
     char rel_name[512];
     if (!outfile) {
@@ -110,7 +133,7 @@ int main(int argc, char **argv) {
     ctx.infile   = infile;
     ctx.outfile  = outfile;
     ctx.outfmt   = outfmt;
-    ctx.z80_mode = initial_z80;
+    ctx.cpu_mode = initial_cpu;
     symtab_init(&ctx.symtab);
 
     /* derive module name from filename */
