@@ -334,7 +334,7 @@ static void do_opcode(AsmCtx *ctx, const char *opcode, const char *args, SrcLine
                     has_idx1 ? &idx1 : NULL,
                     has_idx2 ? &idx2 : NULL,
                     &inst
-        )                  :
+        )                                   :
         encode_8080(ctx->cpu_mode, opcode,
                     op1[0]   ? op1   : NULL,
                     op2[0]   ? op2   : NULL,
