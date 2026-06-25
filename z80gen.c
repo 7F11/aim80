@@ -382,6 +382,12 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         }
         /* JP nn */
         if (v1 && !ind1)   EMIT_REL16(v1, 0xC3);
+
+        if (cpu_mode & INST_SET_ZXNEXT) {
+        /* JP (C) */
+            if (ind2 && O1D("C")) EMIT2(0xED, 0x98);
+        }
+
         return -1;
     }
     /* === JR === */
@@ -602,7 +608,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
     if (cpu_mode & INST_SET_ZXNEXT) {
         if (OP("MUL") && O1D("D") && O2D("E")) EMIT2(0xED, 0x30);
         if (OP("SWAPNIB"))                     EMIT2(0xED, 0x23);
-        if (OP("MIRROR"))                      EMIT2(0xED, 0x24);
+        if (OP("MIRROR") && O1D("A"))          EMIT2(0xED, 0x24);
         if (OP("PIXELDN"))                     EMIT2(0xED, 0x93);
         if (OP("PIXELAD"))                     EMIT2(0xED, 0x94);
         if (OP("SETAE"))                       EMIT2(0xED, 0x95);
