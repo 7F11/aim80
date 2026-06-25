@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <assert.h>
 #include "codegen.h"
 
 #define EQ(var,string)     (strcasecmp(var,string) == 0)
@@ -13,6 +14,8 @@
 #define O2D(string)        EQ_DEF(o2,string)
 #define SRC(string)        EQ_DEF(src,string)
 #define IXY(var)           (pre = EQ_DEF(var,"IX") ? 0xDD : EQ_DEF(var, "IY") ? 0xFD : 0)
+#define LOW(value)         ((value) & 0xFF)
+#define HIGH(value)        (((value)>>8) & 0xFF)
 
 #define MATCH(name, val) if (EQ(n, name)) return (val)
 int z80_reg8(const char *n) {
@@ -84,7 +87,7 @@ static void mk(Instruction *i, int n, ...){
     memset(i, 0, sizeof(*i));
     i->len = n;
     i->reloc_pos = -1;
-    for (int j = 0; j < n; j++)i->bytes[j] = __builtin_va_arg(ap, int) & 0xFF;
+    for (int j = 0; j < n; j++)i->bytes[j] = LOW(__builtin_va_arg(ap, int));
 
     __builtin_va_end(ap);
 }
@@ -94,8 +97,8 @@ static void mk_rel16(Instruction *i, int nb, const unsigned char *b, Value *v){
     i->reloc_pos = -1;
     for (int j = 0; j < nb; j++)i->bytes[j] = b[j];
 
-    i->bytes[nb] = v->num & 0xFF;
-    i->bytes[nb + 1] = (v->num >> 8) & 0xFF;
+    i->bytes[nb]     = LOW(v->num);
+    i->bytes[nb + 1] = HIGH(v->num);
     i->len = nb + 2;
     if (!val_is_absolute(*v)) {
         i->has_reloc  = 1;
@@ -110,7 +113,7 @@ static void mk_rel8(Instruction *i, int nb, const unsigned char *b, Value *v){
     i->reloc_pos = -1;
     for (int j = 0; j < nb; j++)i->bytes[j] = b[j];
 
-    int bv = (v->byte_op == 2) ? ((v->num >> 8) & 0xFF) : (v->num & 0xFF);
+    int bv = (v->byte_op == 2) ? HIGH(v->num) : LOW(v->num);
     i->bytes[nb] = bv;
     i->len = nb + 1;
     if (!val_is_absolute(*v)) {
@@ -133,9 +136,43 @@ static void mk_rel8(Instruction *i, int nb, const unsigned char *b, Value *v){
 #define EMIT_REL8(v, ...)     do { unsigned char b[] = {__VA_ARGS__}; mk_rel8(inst, sizeof(b), b, v); return 0; } while(0)
 #define IS_REG8(r) ((r) >= 0 && (r) <= 7 && (r) != 6)
 
+/*
+ * encode_z80 — Encode a single Z80-family instruction.
+ *
+ * Parameters:
+ *   cpu_mode  INST_SET_* bitmask selecting valid instruction subsets
+ *   op        Opcode mnemonic (never NULL, always uppercase-comparable)
+ *   o1        First operand register name, or NULL if none/not a register
+ *   o2        Second operand register name, or NULL if none/not a register
+ *   v1        First operand value (immediate/address), or NULL if none
+ *   v2        Second operand value (immediate/address), or NULL if none
+ *   ind1      1 if first operand is indirect (parenthesized), 0 otherwise
+ *   ind2      1 if second operand is indirect (parenthesized), 0 otherwise
+ *   ix1       Index displacement value for (IX+d)/(IY+d) in operand 1, or NULL
+ *   ix2       Index displacement value for (IX+d)/(IY+d) in operand 2, or NULL
+ *   inst      Output: filled with encoded bytes on success
+ *
+ * Operand conventions (set by PARSE_OP in the caller):
+ *   - If operand is a recognized register: o1/o2 is set, v1/v2 is NULL
+ *   - If operand is an expression:         o1/o2 is NULL, v1/v2 is set
+ *   - If operand is (IX+d) or (IY+d):      o1/o2="IX"/"IY", ind=1, ix=displacement
+ *   - If operand is (reg):                 o1/o2=reg name, ind=1, v=NULL
+ *   - If operand is (expr):                o1/o2=NULL, ind=1, v=value
+ *   - No operand at all:                   o=NULL, v=NULL, ind=0, ix=NULL
+ *
+ * Returns:
+ *    0  instruction encoded successfully (inst filled)
+ *   -1  cannot encode (unrecognized instruction or invalid operand combo)
+ */
 int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
                Value *v1, Value *v2, int ind1, int ind2,
                Value *ix1, Value *ix2, Instruction *inst) {
+    assert(op != NULL);
+    assert(inst != NULL);
+    assert(!ind1 || o1 || v1);  /* indirect requires something inside parens */
+    assert(!ind2 || o2 || v2);
+    assert(!ix1 || ind1);       /* displacement only with indirect */
+    assert(!ix2 || ind2);
     memset(inst, 0, sizeof(*inst));
     inst->reloc_pos = -1;
     int r, s, rr, cc, is_dec = 0;
@@ -206,7 +243,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             s = z80_reg8(o2);
             if (IS_REG8(s))     EMIT1(0x70 | s);
             /* LD (HL), n */
-            if (v2)             EMIT2(0x36, v2->num & 0xFF);
+            if (v2)             EMIT2(0x36, LOW(v2->num));
         }
         /* LD r, n (immediate) */
         if (!ind1 && v2 && !ind2) {
@@ -250,18 +287,18 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             if (IXY(o2))             EMIT_REL16(v1, pre, 0x22);
         }
         /* LD r, (IX+d)/(IY+d) */
-        if (o1 && !ind1 && ind2 && o2 && IXY(o2) && ix2) {
+        if (o1 && !ind1 && ind2 && IXY(o2) && ix2) {
             r = z80_reg8(o1);
-            if (IS_REG8(r)) EMIT3(pre, 0x46 | (r << 3), ix2->num & 0xFF);
+            if (IS_REG8(r)) EMIT3(pre, 0x46 | (r << 3), LOW(ix2->num));
         }
         /* LD (IX+d), s / (IY+d), s */
-        if (ind1 && o1 && IXY(o1) && ix1) {
+        if (ind1 && IXY(o1) && ix1) {
             if (o2 && !ind2) {
                 s = z80_reg8(o2);
-                if (IS_REG8(s)) EMIT3(pre, 0x70 | s, ix1->num & 0xFF);
+                if (IS_REG8(s)) EMIT3(pre, 0x70 | s, LOW(ix1->num));
             }
             /* LD (IX+d), n */
-            if (v2)             EMIT_REL8(v2, pre, 0x36, ix1->num & 0xFF);
+            if (v2)             EMIT_REL8(v2, pre, 0x36, LOW(ix1->num));
         }
     }
     /* === PUSH/POP === */
@@ -269,6 +306,9 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         if (IXY(o1)) EMIT2(pre, 0xE5);
         rr = z80_reg16af(o1);
         if (rr >= 0) EMIT1(0xC5 | (rr << 4));
+        /* ZXNEXT: PUSH nn (big-endian) */
+        if ((cpu_mode & INST_SET_ZXNEXT) && v1)
+            EMIT4(0xED, 0x8A, HIGH(v1->num), LOW(v1->num));
         return -1;
     }
     if (OP("POP")) {
@@ -301,10 +341,12 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             }
             /* ADD IX, rr / ADD IY, rr */
             if (o2 && g == 0 && IXY(o1)) {
-                rr = z80_reg16(o2);
+                rr = EQ(o1, o2) ? 2 : z80_reg16(o2);
                 if (rr >= 0) EMIT2(pre, 0x09 | (rr << 4));
             }
-            /* ALU A, r or ALU r (implicit A) */
+            /* ALU A, r or ALU r (implicit A)
+             * Both forms use identical encoding; 'src' aliases the source
+             * operand: operand 2 for "ADD A,x", operand 1 for "ADD x". */
             int has_o2 = (o2 && o2[0]);
             int has_v2 = (v2 != NULL);
             /* two-operand form: ALU A, src */
@@ -316,7 +358,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
                 Value *src_v  = has_v2 ? v2 : NULL;
                 /* ALU A, (IX+d) / (IY+d) */
                 if (src_ind && IXY(src) && src_ix)
-                    EMIT3(pre, 0x86 | (g << 3), src_ix->num & 0xFF);
+                    EMIT3(pre, 0x86 | (g << 3), LOW(src_ix->num));
                 /* ALU A, (HL) */
                 if (src && src_ind && EQ(src, "HL")) EMIT1(0x86 | (g << 3));
                 /* ALU A, r */
@@ -325,7 +367,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
                     if (IS_REG8(s) && !src_ind)      EMIT1(0x80 | (g << 3) | s);
                 }
                 /* ALU A, n */
-                if (src_v)                           EMIT2(0xC6 | (g << 3), src_v->num & 0xFF);
+                if (src_v)                           EMIT2(0xC6 | (g << 3), LOW(src_v->num));
                 break;
             }
             /* single-operand form: ALU src (implicit A) */
@@ -335,15 +377,15 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
                 Value *src_ix = ix1;
                 Value *src_v  = v1;
                 if (!src || !src[0]) {
-                    if (src_v) EMIT2(0xC6 | (g << 3), src_v->num & 0xFF);
+                    if (src_v) EMIT2(0xC6 | (g << 3), LOW(src_v->num));
                     break;
                 }
                 if (src_ind && IXY(src) && src_ix)
-                    EMIT3(pre, 0x86 | (g << 3), src_ix->num & 0xFF);
+                    EMIT3(pre, 0x86 | (g << 3), LOW(src_ix->num));
                 if (src_ind && EQ(src, "HL")) EMIT1(0x86 | (g << 3));
                 s = z80_reg8(src);
                 if (IS_REG8(s) && !src_ind)   EMIT1(0x80 | (g << 3) | s);
-                if (src_v && !src_ind)        EMIT2(0xC6 | (g << 3), src_v->num & 0xFF);
+                if (src_v && !src_ind)        EMIT2(0xC6 | (g << 3), LOW(src_v->num));
                 break;
             }
         }
@@ -353,7 +395,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         if (!o1) return -1;
         /* INC/DEC (IX+d) */
         if (ind1 && IXY(o1) && ix1)
-            EMIT3(pre, is_dec ? 0x35 : 0x34, ix1->num & 0xFF);
+            EMIT3(pre, is_dec ? 0x35 : 0x34, LOW(ix1->num));
         /* INC/DEC r (check before rr since B/D/H match both) */
         r = z80_reg8(o1);
         if (IS_REG8(r) && !ind1) EMIT1((is_dec ? 0x05 : 0x04) | (r << 3));
@@ -385,7 +427,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
 
         if (cpu_mode & INST_SET_ZXNEXT) {
         /* JP (C) */
-            if (ind2 && O1D("C")) EMIT2(0xED, 0x98);
+            if (ind1 && O1D("C")) EMIT2(0xED, 0x98);
         }
 
         return -1;
@@ -395,15 +437,15 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         /* JR cc, e */
         if (o1 && v2) {
             cc = z80_cond(o1);
-            if (cc >= 0 && cc <= 3) EMIT2(0x20 | (cc << 3), v2->num & 0xFF);
+            if (cc >= 0 && cc <= 3) EMIT2(0x20 | (cc << 3), LOW(v2->num));
         }
         /* JR e */
-        if (v1) EMIT2(0x18, v1->num & 0xFF);
+        if (v1) EMIT2(0x18, LOW(v1->num));
         return -1;
     }
     /* === DJNZ === */
     if (OP("DJNZ")) {
-        if (v1) EMIT2(0x10, v1->num & 0xFF);
+        if (v1) EMIT2(0x10, LOW(v1->num));
         return -1;
     }
     /* === CALL === */
@@ -436,8 +478,8 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             if (O1("DE") && O2("HL"))                EMIT1(0xEB);
             if (O1("AF") && (O2("AF'") || O2("AF"))) EMIT1(0x08);
             if (ind1 && O1("SP")) {
-                if (O2("HL"))   EMIT1(0xE3);
-                if (IXY(o2)) EMIT2(pre, 0xE3);
+                if (O2("HL"))                        EMIT1(0xE3);
+                if (IXY(o2))                         EMIT2(pre, 0xE3);
             }
         }
         return -1;
@@ -452,8 +494,8 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
     /* === IN/OUT === */
     if (OP("IN")) {
         if (o1) {
-            if (O1("A") && ind2 && v2) EMIT2(0xDB, v2->num & 0xFF);
-            if (ind2 && O2("C")) {
+            if (O1("A") && ind2 && v2) EMIT2(0xDB, LOW(v2->num));
+            if (ind2 && O2D("C")) {
                 r = z80_reg8(o1);
                 if (r >= 0)            EMIT2(0xED, 0x40 | (r << 3));
             }
@@ -462,8 +504,8 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
     }
     if (OP("OUT")) {
         if (o2) {
-            if (ind1 && v1 && O2("A")) EMIT2(0xD3, v1->num & 0xFF);
-            if (ind1 && O1("C")) {
+            if (ind1 && v1 && O2("A")) EMIT2(0xD3, LOW(v1->num));
+            if (ind1 && O1D("C")) {
                 r = z80_reg8(o2);
                 if (r >= 0)            EMIT2(0xED, 0x41 | (r << 3));
             }
@@ -480,7 +522,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         int bit = v1->num & 7;
         /* BIT/SET/RES b, (IX+d) */
         if (ind2 && IXY(o2) && ix2)
-            EMIT4(pre, 0xCB, ix2->num & 0xFF, base | (bit << 3) | 6);
+            EMIT4(pre, 0xCB, LOW(ix2->num), base | (bit << 3) | 6);
         /* BIT/SET/RES b, (HL) */
         if (ind2 && O2("HL")) EMIT2(0xCB, base | (bit << 3) | 6);
         /* BIT/SET/RES b, s */
@@ -504,7 +546,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             int base = rot[i].code;
             /* (IX+d) / (IY+d) */
             if (ind1 && IXY(o1) && ix1)
-                EMIT4(pre, 0xCB, ix1->num & 0xFF, base | 6);
+                EMIT4(pre, 0xCB, LOW(ix1->num), base | 6);
             /* (HL) */
             if (ind1 && O1("HL"))    EMIT2(0xCB, base | 6);
             /* s */
@@ -524,13 +566,13 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         }
         /* LD IXH/IXL/IYH/IYL, s/n */
         if (OP("LD") && o1) {
-            int ixr = -1, pre = 0;
+            int ixr = -1;
             if      (O1("IXH")) { ixr = 4; pre = 0xDD; }
             else if (O1("IXL")) { ixr = 5; pre = 0xDD; }
             else if (O1("IYH")) { ixr = 4; pre = 0xFD; }
             else if (O1("IYL")) { ixr = 5; pre = 0xFD; }
             if (ixr >= 0) {
-                if (v2) EMIT3(pre, 0x26 | ((ixr - 4) << 3), v2->num & 0xFF);
+                if (v2) EMIT3(pre, 0x26 | ((ixr - 4) << 3), LOW(v2->num));
                 int s = z80_reg8(o2);
                 if (s >= 0 && s != 4 && s != 5 && s != 6)
                     EMIT2(pre, 0x60 | ((ixr - 4) << 3) | s);
@@ -538,7 +580,6 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             /* LD r, IXH/IXL/IYH/IYL */
             if (o2) {
                 int ixs = -1;
-                pre = 0;
                 if      (O2("IXH")) { ixs = 4; pre = 0xDD; }
                 else if (O2("IXL")) { ixs = 5; pre = 0xDD; }
                 else if (O2("IYH")) { ixs = 4; pre = 0xFD; }
@@ -551,6 +592,7 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
             }
         }
     }
+
 
     /* === Z180 extensions (CPU_Z180 only) === */
     if (cpu_mode & INST_SET_Z180) {
@@ -570,20 +612,20 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
                 int r = z80_reg8(o2);
                 if (r >= 0) EMIT2(0xED, 0x04 | (r << 3));
             }
-            if (v2) EMIT3(0xED, 0x64, v2->num & 0xFF);
+            if (v2) EMIT3(0xED, 0x64, LOW(v2->num));
         }
         /* TSTIO n */
         if (OP("TSTIO") && v1)
-            EMIT3(0xED, 0x74, v1->num & 0xFF);
+            EMIT3(0xED, 0x74, LOW(v1->num));
         /* IN0 r,(n) */
         if (OP("IN0") && o1 && v2 && ind2) {
             int r = z80_reg8(o1);
-            if (r >= 0) EMIT3(0xED, 0x00 | (r << 3), v2->num & 0xFF);
+            if (r >= 0) EMIT3(0xED, 0x00 | (r << 3), LOW(v2->num));
         }
         /* OUT0 (n),r */
         if (OP("OUT0") && v1 && ind1 && o2) {
             int r = z80_reg8(o2);
-            if (r >= 0) EMIT3(0xED, 0x01 | (r << 3), v1->num & 0xFF);
+            if (r >= 0) EMIT3(0xED, 0x01 | (r << 3), LOW(v1->num));
         }
     }
 
@@ -628,13 +670,13 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         }
         /* TEST nn */
         if (OP("TEST") && v1)
-            EMIT3(0xED, 0x27, v1->num & 0xFF);
+            EMIT3(0xED, 0x27, LOW(v1->num));
         /* NEXTREG r,n */
         if (OP("NEXTREG") && v1 && v2)
-            EMIT4(0xED, 0x91, v1->num & 0xFF, v2->num & 0xFF);
+            EMIT4(0xED, 0x91, LOW(v1->num), LOW(v2->num));
         /* NEXTREG r,A */
         if (OP("NEXTREG") && v1 && O2D("A"))
-            EMIT3(0xED, 0x92, v1->num & 0xFF);
+            EMIT3(0xED, 0x92, LOW(v1->num));
         /* ADD HL/DE/BC,A */
         if (OP("ADD") && o1 && O2D("A")) {
             if (O1("HL")) EMIT2(0xED, 0x31);
@@ -643,13 +685,10 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
         }
         /* ADD HL/DE/BC,nn */
         if (OP("ADD") && o1 && v2 && !o2) {
-            if (O1("HL")) EMIT4(0xED, 0x34, v2->num & 0xFF, (v2->num >> 8) & 0xFF);
-            if (O1("DE")) EMIT4(0xED, 0x35, v2->num & 0xFF, (v2->num >> 8) & 0xFF);
-            if (O1("BC")) EMIT4(0xED, 0x36, v2->num & 0xFF, (v2->num >> 8) & 0xFF);
+            if (O1("HL")) EMIT4(0xED, 0x34, LOW(v2->num), HIGH(v2->num));
+            if (O1("DE")) EMIT4(0xED, 0x35, LOW(v2->num), HIGH(v2->num));
+            if (O1("BC")) EMIT4(0xED, 0x36, LOW(v2->num), HIGH(v2->num));
         }
-        /* PUSH nn (large immediate) */
-        if (OP("PUSH") && v1 && !o1)
-            EMIT4(0xED, 0x8A, (v1->num >> 8) & 0xFF, v1->num & 0xFF);
     }
 
     return -1; /* unknown */
