@@ -601,23 +601,25 @@ int encode_z80(int cpu_mode, const char *op, const char *o1, const char *o2,
     /* === ZX Spectrum Next extensions (CPU_ZXNEXT only) === */
     if (cpu_mode & INST_SET_ZXNEXT) {
         if (OP("MUL") && O1D("D") && O2D("E")) EMIT2(0xED, 0x30);
-        if (OP("SWAPNIB"))  EMIT2(0xED, 0x23);
-        if (OP("MIRROR"))   EMIT2(0xED, 0x24);
-        if (OP("PIXELDN"))  EMIT2(0xED, 0x93);
-        if (OP("PIXELAD"))  EMIT2(0xED, 0x94);
-        if (OP("SETAE"))    EMIT2(0xED, 0x95);
-        if (OP("OUTINB"))   EMIT2(0xED, 0x90);
-        if (OP("LDIX"))     EMIT2(0xED, 0xA4);
-        if (OP("LDDX"))     EMIT2(0xED, 0xAC);
-        if (OP("LDIRX"))    EMIT2(0xED, 0xB4);
-        if (OP("LDDRX"))    EMIT2(0xED, 0xBC);
-        if (OP("LDPIRX"))   EMIT2(0xED, 0xB7);
-        if (OP("LDIRSCALE")) EMIT2(0xED, 0xB6);
-        if (OP("BSLA") && o1 && o2)  EMIT2(0xED, 0x28);
-        if (OP("BSRA") && o1 && o2)  EMIT2(0xED, 0x29);
-        if (OP("BSRL") && o1 && o2)  EMIT2(0xED, 0x2A);
-        if (OP("BSRF") && o1 && o2)  EMIT2(0xED, 0x2B);
-        if (OP("BRLC") && o1 && o2)  EMIT2(0xED, 0x2C);
+        if (OP("SWAPNIB"))                     EMIT2(0xED, 0x23);
+        if (OP("MIRROR"))                      EMIT2(0xED, 0x24);
+        if (OP("PIXELDN"))                     EMIT2(0xED, 0x93);
+        if (OP("PIXELAD"))                     EMIT2(0xED, 0x94);
+        if (OP("SETAE"))                       EMIT2(0xED, 0x95);
+        if (OP("OUTINB"))                      EMIT2(0xED, 0x90);
+        if (OP("LDIX"))                        EMIT2(0xED, 0xA4);
+        if (OP("LDDX"))                        EMIT2(0xED, 0xAC);
+        if (OP("LDIRX"))                       EMIT2(0xED, 0xB4);
+        if (OP("LDDRX"))                       EMIT2(0xED, 0xBC);
+        if (OP("LDPIRX"))                      EMIT2(0xED, 0xB7);
+        if (OP("LDIRSCALE"))                   EMIT2(0xED, 0xB6);
+        if (O1D("DE") && O2D("B")) {
+            if (OP("BSLA"))                    EMIT2(0xED, 0x28);
+            if (OP("BSRA"))                    EMIT2(0xED, 0x29);
+            if (OP("BSRL"))                    EMIT2(0xED, 0x2A);
+            if (OP("BSRF"))                    EMIT2(0xED, 0x2B);
+            if (OP("BRLC"))                    EMIT2(0xED, 0x2C);
+        }
         /* TEST nn */
         if (OP("TEST") && v1)
             EMIT3(0xED, 0x27, v1->num & 0xFF);
